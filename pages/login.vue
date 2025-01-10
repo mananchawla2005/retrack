@@ -64,6 +64,9 @@ async function login(e) {
             <img class="w-[20px] h-[20px] mr-4" src="https://www.svgrepo.com/show/475656/google-color.svg" loading="lazy" alt="google logo">
             Login with Google
         </a>
+        <p class="text-center mt-4">
+          Don't have an account? <a href="/signup" class="text-blue-700 hover:underline">Sign Up</a>
+        </p>
       </div>
     </div>
   </template>
