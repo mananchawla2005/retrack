@@ -66,12 +66,12 @@
               <p v-if="keywordsError" class="text-red-500 text-sm mt-1">At least one keyword is required.</p>
             </div>
             <div class="flex justify-between">
-              <button type="button" @click="createInviteCode" class="bg-yellow-500 text-white py-2 px-4 rounded hover:bg-yellow-600 transition font-semibold">
+              <button :disabled="inviteCodeGenerated" type="button" @click="createInviteCode" class="bg-yellow-500 text-white py-2 px-4 rounded hover:bg-yellow-600 transition font-semibold">
                 Create Invite Code
               </button>
-              <button type="submit" class="bg-blue-700 text-white py-2 px-4 rounded hover:bg-blue-800 transition font-semibold">
+              <NuxtLink :to="nextLink" class="bg-blue-700 block text-white py-2 px-4 rounded hover:bg-blue-800 transition font-semibold">
                 Submit
-              </button>
+              </NuxtLink>
             </div>
           </form>
           <div v-if="inviteCode" class="mt-4 text-center">
@@ -111,7 +111,6 @@
   definePageMeta({
 	middleware: ["protected"]
 });
-
   const showCreateForm = ref(false);
   const showJoinForm = ref(false);
   const projectName = ref('');
@@ -122,7 +121,7 @@
   const inviteCodeInput = ref('');
   const showDropdown = ref(false);
   const inviteCodeGenerated = ref(false);
-  
+  const nextLink = ref('/dashboard')
   const projectNameError = ref(false);
   const descriptionError = ref(false);
   const keywordsError = ref(false);
@@ -142,8 +141,18 @@
   
   const router = useRouter();
   
-  function generateInviteCode() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+  async function generateInviteCode() {
+    const result = await $fetch('/api/project/new', {
+      method: "POST",
+      body: {
+        keywords: keywords.value,
+        projectName: projectName.value,
+        description: description.value
+      }
+    })
+    console.log(result)
+    nextLink.value = '/dashboard/project/'+result.projectId
+    return result.inviteCode
   }
   
   function addKeyword() {
@@ -180,9 +189,9 @@
     return !projectNameError.value && !descriptionError.value && !keywordsError.value;
   }
   
-  function createInviteCode() {
+  async function createInviteCode() {
     if (validateForm()) {
-      inviteCode.value = generateInviteCode();
+      inviteCode.value = await generateInviteCode();
       inviteCodeGenerated.value = true;
     }
   }
@@ -203,7 +212,15 @@
     });
   }
   
+
   async function joinProject() {
+    const data = await $fetch('/api/project/join', {
+      method: "POST",
+      body: {
+        inviteCode: inviteCodeInput.value
+      }
+    })
+    await router.push('/dashboard/project/' + data.projectId)
     // Here you would typically send the invite code to the server to join the project
     console.log('Joining Project with Invite Code:', inviteCodeInput.value);
   }
