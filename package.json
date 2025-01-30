@@ -10,8 +10,10 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.26.0",
     "@lucia-auth/adapter-postgresql": "^3.1.2",
     "@node-rs/argon2": "^2.0.2",
+    "@tato30/vue-pdf": "^1.11.3",
     "arctic": "^2.3.3",
     "chart.js": "^4.4.7",
     "lucia": "^3.2.2",

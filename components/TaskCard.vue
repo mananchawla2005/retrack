@@ -57,12 +57,18 @@
           <!-- Assigned To -->
           <div class="flex items-center">
             <div class="flex items-center space-x-2">
+              <template v-for="userId in task.assignedTo">
               <div class="w-6 h-6 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 flex items-center justify-center">
                 <span class="text-xs text-white font-medium">
-                  {{ getInitials(task.assignedTo) }}
-                </span>
-              </div>
-              <span class="text-sm text-gray-600 truncate">{{ task.assignedTo }}</span>
+
+                    <span v-if="!isLoading && userIdsMapping[userId]">
+                      {{ getInitials(userId) }}
+                    </span>
+                    <span v-else>...</span>
+                  </span>
+                </div>
+              </template>
+              <!-- <span class="text-sm text-gray-600 truncate">{{ task.assignedTo }}</span> -->
             </div>
           </div>
         </div>
@@ -73,6 +79,31 @@
 
 <script setup>
 import { computed } from 'vue';
+const userIdsMapping = ref({})
+const isLoading = ref(true);
+const route = useRoute()
+
+const fetchAssignees = async () => {
+  try {
+    const data = await $fetch('/api/project/assignees', {
+      method: "POST",
+      body: {
+        projectId: route.params.id
+      }
+    });
+    userIdsMapping.value = data.users.reduce((acc, user) => {
+      acc[user.user_id] = user.name;
+      return acc;
+    }, {});
+    isLoading.value = false;
+  } catch (error) {
+    console.error('Error fetching assignees:', error);
+  }
+};
+
+onMounted(() => {
+  fetchAssignees();
+});
 
 const props = defineProps({
   task: {
@@ -120,7 +151,13 @@ const timeRemainingStyle = computed(() => {
   return 'bg-green-100 text-green-800';
 });
 
-const getInitials = (name) => {
+const getInitials = (userId) => {
+  // Guard clause for undefined/loading state
+  if (isLoading.value || !userIdsMapping.value[userId]) {
+    return '...'; // Show loading state
+  }
+
+  const name = userIdsMapping.value[userId];
   return name
     .split(' ')
     .map(word => word[0])
