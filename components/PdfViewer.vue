@@ -1,9 +1,10 @@
 <template>
     <div class="toolbar">
         <button @click="setMode('highlight')" :class="{ active: currentMode === 'highlight' }">Highlighter</button>
-        <button @click="setMode('pen')" :class="{ active: currentMode === 'pen' }">Pen</button>
-        <input type="color" v-model="currentColor" v-show="currentMode !== 'select'">
-        <input type="range" v-model="currentStrokeSize" min="1" max="10" v-show="currentMode === 'pen'">
+        <button @click="setMode('pen')" :class="{ active: currentMode === 'pen'}">Pen</button>
+        <input type="color" v-model="currentColor" @change="setColor" v-show="currentMode !== 'select'">
+        <input type="range" v-model="currentStrokeSize" @change="setStroke" min="1" max="10" v-show="(currentMode === 'pen' || currentMode == 'eraser')">
+        <button @click="setEraserMode" :class="{ active: currentMode === 'eraser' }" v-show="(currentMode === 'pen' || currentMode == 'eraser')" >Eraser</button>
     </div>
     <div v-if="error" class="error">
         {{ error }}
@@ -18,19 +19,18 @@
             <div v-for="page in pages" :key="page" class="pdf-page" ref="pageContainers">
                 <VuePDF :pdf="pdfInstance" :page="page" :text-layer="true" :scale="2"
                     @mouseup="currentMode === 'highlight' && handleTextSelection($event, page)" />
-                <svg class="drawing-overlay" :class="{ 'active': currentMode === 'pen' }" :width="pageSize.width"
-                    :height="pageSize.height" :viewBox="`0 0 ${pageSize.width} ${pageSize.height}`"
-                    preserveAspectRatio="none" @mousedown="startDrawing($event, page)"
-                    @mousemove="continueDrawing($event, page)" @mouseup="finishDrawing(page)"
-                    @mouseleave="finishDrawing(page)">
-                    <!-- Existing drawings -->
-                    <path v-for="drawing in getDrawingsForPage(page)" :key="drawing.id" :d="getPathD(drawing.path)"
-                        :stroke="drawing.color" :stroke-width="drawing.strokeWidth" fill="none"
-                        stroke-linecap="round" />
-                    <!-- Current drawing preview -->
-                    <path v-if="isDrawing" :d="getPathD(currentPath)" :stroke="currentColor"
-                        :stroke-width="currentStrokeSize" fill="none" stroke-linecap="round" />
-                </svg>
+                    <div :class="{ 'drawing-active': currentMode === 'pen' || currentMode === 'eraser' }" class="drawing-layer absolute top-0 left-0 right-0 w-full h-full z-20" ref="containerRef">
+                        <vp-editor 
+                        :key="editorDimensions.width + '-' + editorDimensions.height"
+                        class="text-center" 
+                        :width="editorDimensions.width" 
+                        :height="editorDimensions.height"
+                        :history="getPageHistory(page)" 
+                        :settings="settings" 
+                        @save="downloadSvg" 
+                        :tools
+                        />
+                    </div>
             </div>
         </div>
         <div v-else class="error">No PDF content available</div>
@@ -41,17 +41,22 @@
         <p>Blob size: {{ blobSize }} bytes</p>
         <p>Pages: {{ pages || 0 }}</p>
         <p>Highlights: {{ highlights.length }}</p>
-        <button @click="clearHighlights">Clear Highlights</button>
+        <!-- <button @click="clearHighlights">Clear Highlights</button>
         <p>Annotations: {{ highlights.length + drawings.length }}</p>
-        <button @click="clearAllAnnotations">Clear All</button>
+        <button @click="clearAllAnnotations">Clear All</button> -->
+    </div>
+    <div v-if="showContextMenu" class="context-menu" :style="contextMenuPosition">
+        <div class="context-menu-item" @click="handleContextMenuDelete">Delete Highlight</div>
     </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
 import { VuePDF, usePDF } from '@tato30/vue-pdf'
 import '@tato30/vue-pdf/style.css'
+import { VpEditor, useFreehand, useRectangle, downloadSvg, createSettings, useEraser} from 'vue-paint'
+const tools = [useFreehand(), useRectangle(), useEraser()]
+const histories = ref(new Map())
+const settings = createSettings(tools, { color: "#000000" })
 
 const route = useRoute()
 const pages = ref([])
@@ -61,112 +66,109 @@ const blobSize = ref(0)
 const pdfInstance = ref(null)
 const pageCount = ref(0)
 const currentMode = ref('highlight')
-const currentColor = ref('#ffff00')
+const currentColor = ref('#000000')
 const currentStrokeSize = ref(3)
-const drawings = ref([])
-const isDrawing = ref(false)
-const currentPath = ref([])
+const showContextMenu = ref(false)
+const contextMenuPosition = ref({ top: '0px', left: '0px' })
+const selectedHighlightId = ref(null)
+const containerRef = ref(null)
+const editorDimensions = ref({ width: 0, height: 0 })
 let pdfUrl = null
 let stopPdfWatch = null
-const pdfDimensions = ref({ width: 0, height: 0 })
-const pageSize = ref({ width: 0, height: 0 })
-
-const startDrawing = (event, page) => {
-    if (currentMode.value !== 'pen') return
-    isDrawing.value = true
-    const svg = event.target.closest('.drawing-overlay')
-    const rect = svg.getBoundingClientRect()
-    const point = {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
+const updateDimensions = () => {
+    if (!containerRef.value) return
+    editorDimensions.value = {
+        width: containerRef.value[0].offsetWidth,
+        height: containerRef.value[0].offsetHeight
     }
-    currentPath.value = [point]
+    console.log(editorDimensions.value)
 }
-
-const continueDrawing = (event, page) => {
-    if (!isDrawing.value || currentMode.value !== 'pen') return
-    const svg = event.target.closest('.drawing-overlay')
-    const rect = svg.getBoundingClientRect()
-    const point = {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top
-    }
-    currentPath.value.push(point)
-}
-
-// Update SVG dimensions when PDF loads
-const updatePdfDimensions = () => {
-    nextTick(() => {
-        const pdfElement = document.querySelector('.pdf-page')
-        if (pdfElement) {
-            const { width, height } = pdfElement.getBoundingClientRect()
-            pageSize.value = { width, height }
-            pdfDimensions.value = { width, height }
-        }
-    })
-}
-
-watch(() => pages.value, updatePdfDimensions)
-onMounted(() => {
-    window.addEventListener('resize', updatePdfDimensions)
-    updatePdfDimensions
-})
-onUnmounted(() => window.removeEventListener('resize', updatePdfDimensions))
 
 const setMode = (mode) => {
     if (['highlight', 'pen'].includes(mode)) {
         currentMode.value = mode
+        if(mode === 'pen') {
+            settings.value.tool = 'freehand'
+            updateDimensions()
+        } else {
+            settings.value.tool = 'none' // Disable drawing in highlight mode
+        }
     }
 }
 
-// const startDrawing = (event, page) => {
-//     if (currentMode.value !== 'pen') return
-//     isDrawing.value = true
-//     const svg = event.target.closest('.drawing-overlay')
-//     const rect = svg.getBoundingClientRect()
-//     currentPath.value = [{
-//         x: event.clientX - rect.left,
-//         y: event.clientY - rect.top
-//     }]
-// }
-const getDrawingsForPage = (page) => {
-    return drawings.value.filter(d => d.page === page)
+const getPageHistory = (pageNum) => {
+  if (!histories.value.has(pageNum)) {
+    histories.value.set(pageNum, [])
+  }
+  return histories.value.get(pageNum)
 }
 
-const getPathD = (path) => {
-    return path.length > 0
-        ? `M ${path.map(p => `${p.x} ${p.y}`).join(' L ')}`
-        : ''
+const setStroke = () => {
+    settings.value.thickness = currentStrokeSize
+}
+const setColor = () => {
+    settings.value.color = currentColor
 }
 
-const clearAllAnnotations = () => {
-    highlights.value = []
-    drawings.value = []
+const setEraserMode = () => {
+    console.log(settings.value)
+    settings.value.tool='eraser'
+    currentMode.value = 'eraser'
 }
-// const continueDrawing = (event, page) => {
-//     if (!isDrawing.value || currentMode.value !== 'pen') return
-//     const svg = event.target.closest('.drawing-overlay')
-//     const rect = svg.getBoundingClientRect()
-//     currentPath.value.push({
-//         x: event.clientX - rect.left,
-//         y: event.clientY - rect.top
-//     })
-// }
 
-const finishDrawing = (page) => {
-    if (!isDrawing.value) return
-    isDrawing.value = false
-    if (currentPath.value.length < 2) return
-
-    drawings.value.push({
-        id: generateId(),
-        page,
-        color: currentColor.value,
-        strokeWidth: currentStrokeSize.value,
-        path: [...currentPath.value]
-    })
-    currentPath.value = []
+const initializeMode = () => {
+  // Force initial mode setup
+  const textLayers = document.querySelectorAll('.textLayer')
+  textLayers.forEach(layer => {
+      layer.classList.remove('drawing-mode')
+  })
+  
+  // Reset editor settings
+  settings.value.tool = 'none' // Disable drawing initially
 }
+
+onMounted(() => {
+initializeMode()
+  if (!containerRef.value) return
+
+  // Initial measurement
+  nextTick(() => {
+
+      updateDimensions()
+    
+      // Create ResizeObserver
+      const observer = new ResizeObserver(() => {
+        updateDimensions()
+      })
+    
+      // Start observing
+      observer.observe(containerRef.value)
+    
+      // Cleanup
+      onUnmounted(() => {
+        observer.disconnect()
+      })
+  })
+})
+
+function showMenu(e, highlightId) {
+  e.preventDefault()
+  selectedHighlightId.value = highlightId
+  contextMenuPosition.value = {
+    top: `${e.clientY}px`,
+    left: `${e.clientX}px`
+  }
+  showContextMenu.value = true
+}
+
+
+function handleContextMenuDelete() {
+  if (selectedHighlightId.value) {
+    deleteHighlight(selectedHighlightId.value)
+    showContextMenu.value = false
+  }
+}
+
 function onError(reason) {
     error.value = `PDF loading error: ${reason}`
     console.error(error.value)
@@ -179,12 +181,14 @@ function initPdf(url) {
             withCredentials: true
         })
 
-        stopPdfWatch = watch([pdf, pdfPages], ([pdfVal, pagesVal], _, onCleanup) => {
+        stopPdfWatch = watch([pdf, pdfPages], async ([pdfVal, pagesVal], _, onCleanup) => {
             if (pdfVal) {
                 pdfInstance.value = pdfVal
                 pages.value = pagesVal || []
                 pageCount.value = pagesVal?.length || 0
+                await nextTick()
                 loading.value = false
+                updateDimensions()
             } else if (!loading.value) {
                 error.value = 'Failed to load PDF content'
             }
@@ -229,96 +233,123 @@ onUnmounted(() => {
 const highlights = ref([])
 const generateId = () => '_' + Math.random().toString(36).substr(2, 9);
 
+const attachCombinedHover = (el, id) => {
+  el.addEventListener('mouseenter', () => {
+    document.querySelectorAll(`[data-highlight-id="${id}"]`).forEach(elem => {
+      elem.classList.add('combined-hover')
+    })
+  })
+  el.addEventListener('mouseleave', () => {
+    document.querySelectorAll(`[data-highlight-id="${id}"]`).forEach(elem => {
+      elem.classList.remove('combined-hover')
+    })
+  })
+}
+const createHighlightSpan = (highlightId, color) => {
+  const container = document.createElement('span')
+  container.style.backgroundColor = color
+  container.classList.add('highlight')
+  container.dataset.highlightId = highlightId
+  container.addEventListener('contextmenu', (e) => showMenu(e, highlightId))
+  attachCombinedHover(container, highlightId)
+  return container
+}
+
 function handleTextSelection(event, page) {
-    const selection = window.getSelection();
-    if (!selection.toString()) return;
+  const selection = window.getSelection();
+  if (!selection.toString()) return;
+  const range = selection.getRangeAt(0);
+  const highlightId = generateId();
+  const highlight = {
+      id: highlightId,
+      text: selection.toString(),
+      page: page,
+      color: currentColor.value
+  };
+  highlights.value.push(highlight);
 
-    const range = selection.getRangeAt(0);
-    const highlightColor = 'yellow';
+  const baseHighlightSpan = createHighlightSpan(highlightId, currentColor.value);
 
-    const highlight = {
-        id: generateId(),
-        text: selection.toString(),
-        page: page,
-        color: highlightColor
-    };
+  try {
+      range.surroundContents(baseHighlightSpan);
+  } catch (error) {
+      const commonAncestor = range.commonAncestorContainer;
+      const walker = document.createTreeWalker(commonAncestor, NodeFilter.SHOW_TEXT, null);
+      const nodesToWrap = [];
+      while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (range.intersectsNode(node)) {
+              nodesToWrap.push(node);
+          }
+      }
+      nodesToWrap.forEach(node => {
+          let startOffset = 0;
+          let endOffset = node.textContent.length;
+          if (node === range.startContainer) startOffset = range.startOffset;
+          if (node === range.endContainer) endOffset = range.endOffset;
+          if (startOffset === endOffset) return;
 
-    highlights.value.push(highlight);
+          const text = node.textContent;
+          const beforeText = text.slice(0, startOffset);
+          const selectedText = text.slice(startOffset, endOffset);
+          const afterText = text.slice(endOffset);
+          const beforeNode = document.createTextNode(beforeText);
+          const selectedNode = document.createTextNode(selectedText);
+          const afterNode = document.createTextNode(afterText);
 
-    const highlightSpan = document.createElement('span');
-    highlightSpan.style.backgroundColor = highlightColor;
-    highlightSpan.classList.add('highlight');
-    highlightSpan.dataset.highlightId = highlight.id;
+          const newHighlightSpan = createHighlightSpan(highlightId, currentColor.value);
+          newHighlightSpan.textContent = '';
+          newHighlightSpan.appendChild(selectedNode);
 
-    const deleteButton = document.createElement('button');
-    deleteButton.innerHTML = '✖ Delete';
-    deleteButton.classList.add('delete-button');
-    deleteButton.dataset.highlightId = highlight.id;
-
-    highlightSpan.appendChild(deleteButton);
-    range.surroundContents(highlightSpan);
-
-    selection.removeAllRanges();
+          const parent = node.parentNode;
+          parent.insertBefore(beforeNode, node);
+          parent.insertBefore(newHighlightSpan, node);
+          parent.insertBefore(afterNode, node);
+          parent.removeChild(node);
+      });
+  }
+  selection.removeAllRanges();
 }
 
 function deleteHighlight(highlightId) {
     // Remove from highlights array
     highlights.value = highlights.value.filter(h => h.id !== highlightId);
-
-    // Remove highlight span
-    const highlightSpan = document.querySelector(`[data-highlight-id="${highlightId}"]`);
-    if (highlightSpan) {
+    
+    // Get all spans with this highlight ID
+    const highlightSpans = document.querySelectorAll(`[data-highlight-id="${highlightId}"]`);
+    
+    // Process each highlight span
+    highlightSpans.forEach(highlightSpan => {
         const parent = highlightSpan.parentNode;
-        while (highlightSpan.firstChild) {
-            if (!highlightSpan.firstChild.classList?.contains('delete-icon')) {
-                parent.insertBefore(highlightSpan.firstChild, highlightSpan);
-            } else {
-                highlightSpan.removeChild(highlightSpan.firstChild);
-            }
-        }
+        
+        // Insert text content before the highlight span
+        const textContent = highlightSpan.textContent;
+        const textNode = document.createTextNode(textContent);
+        parent.insertBefore(textNode, highlightSpan);
+        
+        // Remove the highlight span
         parent.removeChild(highlightSpan);
-    }
+    });
 }
 
 onMounted(() => {
-    document.addEventListener('click', (e) => {
-        if (e.target.classList.contains('delete-icon')) {
-            const highlightId = e.target.dataset.highlightId;
-            deleteHighlight(highlightId);
-        }
-    });
-});
+  document.addEventListener('click', () => {
+    showContextMenu.value = false
+  })
+})
 
 onUnmounted(() => {
-    document.removeEventListener('click', deleteHighlight);
-});
-
-import { nextTick } from 'vue'
-
-const pageContainers = ref([])
-
-// Update SVG dimensions on resize
-const updateSVGDimensions = () => {
-    nextTick(() => {
-        pageContainers.value.forEach(container => {
-            const svg = container.querySelector('.drawing-overlay')
-            if (!svg) return
-
-            const { width, height } = container.getBoundingClientRect()
-            svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
-            svg.setAttribute('width', width)
-            svg.setAttribute('height', height)
-        })
-    })
-}
-
-// Watch for page changes and window resize
-watch(() => pages.value, updateSVGDimensions)
-onMounted(() => {
-
-    window.addEventListener('resize', updateSVGDimensions)
+  document.removeEventListener('click', () => {
+    showContextMenu.value = false
+  })
 })
-onUnmounted(() => window.removeEventListener('resize', updateSVGDimensions))
+
+watch(currentMode, (newMode) => {
+    const textLayers = document.querySelectorAll('.textLayer')
+    textLayers.forEach(layer => {
+        layer.classList.toggle('drawing-mode', newMode === 'pen' || newMode === 'eraser')
+    })
+})
 
 </script>
 
@@ -416,97 +447,21 @@ onUnmounted(() => window.removeEventListener('resize', updateSVGDimensions))
     user-select: text;
 }
 
-/* .pdf-page :deep(.highlight) {
-    background-color: yellow;
-    opacity: 0.5;
-    cursor: pointer;
-} */
 
-.pdf-page :deep(.highlight:hover) {
-    opacity: 0.7;
-
-}
-
-/* .pdf-page :deep(.highlight) {
-    background-color: yellow;
-    opacity: 0.5;
-    cursor: pointer;
-    position: relative;
-    display: inline-block;
-} */
-
-/* .pdf-page :deep(.delete-icon) {
-    position: absolute;
-    top: -10px;
-    right: -10px;
-    background-color: #ff4444;
-    color: white;
-    border-radius: 50%;
-    width: 20px;
-    height: 20px;
-    display: none;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    cursor: pointer;
-    z-index: 1000;
-    font-weight: bold;
-    line-height: 20px;
-    text-align: center;
-} */
-/* .pdf-page :deep(.highlight:hover .delete-icon) {
-    display: block;
-} */
-/* .pdf-page :deep(.highlight) {
-    background-color: yellow;
-    opacity: 0.5;
-    cursor: pointer;
-    position: relative;
-    display: inline-block;
-} */
-
-.pdf-page :deep(.delete-container) {
-    position: absolute;
-    top: -30px;
-    right: -10px;
-    background-color: #ff4444;
-    color: white;
-    border-radius: 4px;
-    padding: 2px 8px;
-    display: none;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    z-index: 1000;
-    font-size: 12px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.pdf-page :deep(.delete-icon) {
-    font-weight: bold;
-    font-size: 14px;
-}
-
-.pdf-page :deep(.delete-text) {
-    white-space: nowrap;
-}
-
-.pdf-page :deep(.highlight:hover .delete-container) {
+.pdf-page :deep(.highlight:hover .highlight-delete-btn) {
     display: flex;
-}
-
-/* Remove old delete-icon styles */
-.pdf-page :deep(.delete-icon) {
-    display: inline-flex;
     align-items: center;
     justify-content: center;
 }
+
+
 
 .pdf-page :deep(.highlight) {
-    background-color: yellow;
+    background-color: var(--highlight-color, yellow);
     opacity: 0.5;
     position: relative;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
     cursor: pointer;
     transition: opacity 0.2s;
 }
@@ -515,59 +470,72 @@ onUnmounted(() => window.removeEventListener('resize', updateSVGDimensions))
     opacity: 0.7;
 }
 
-.pdf-page :deep(.delete-button) {
-    position: absolute;
-    top: -25px;
-    right: 0;
-    background-color: #ff4444;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    cursor: pointer;
-    display: none;
-    z-index: 1000;
-    white-space: nowrap;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+
+.context-menu {
+  position: fixed;
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 150px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  z-index: 1000;
+}
+
+.context-menu-item {
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.context-menu-item:hover {
+  background-color: #f5f5f5;
+}
+
+
+.highlight.combined-hover {
+  opacity: 0.7 !important;
+}
+.pdf-page :deep(.highlight.combined-hover) {
+    opacity: 0.7;
 }
 
 .pdf-page {
-  position: relative;
-  display: inline-block;
-  width: 100%;
-  margin-bottom: 20px; /* Add spacing between pages */
+    position: relative;
 }
 
-.drawing-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 3;
+.drawing-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    pointer-events: none;
+    transition: pointer-events 0.2s;
 }
 
-.drawing-overlay.active {
-  pointer-events: all;
-  cursor: crosshair;
-}
-
-.drawing-overlay path {
-    vector-effect: non-scaling-stroke;
-}
-
-:deep(.textLayer) {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 2;
+.drawing-layer.drawing-active {
+    pointer-events: auto;
 }
 
 :deep(.pdfViewer) {
-    z-index: 1;
+    z-index: 10;
 }
+:deep(.vp-toolbar) {
+    display: none !important;
+    
+     /* z-index: 50; */
+}
+.pdf-page :deep(.textLayer) {
+    opacity: 1 !important;
+    z-index: 20;
+    pointer-events: auto;
+    user-select: text;
+}
+
+.pdf-page :deep(.textLayer.drawing-mode) {
+    pointer-events: none;
+    user-select: none;
+}
+
 </style>
