@@ -11,7 +11,9 @@ async function login(e) {
               password: formData.get("password")
           }
     });
-    await navigateTo("/dashboard");
+    const router = useRouter();
+    router.push("/dashboard");
+    // await navigateTo("/dashboard");
   }
   catch(err){
     error.value = err.statusMessage

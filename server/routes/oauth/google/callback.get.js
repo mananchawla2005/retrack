@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
         if(existingUser.rows.length !==0) {
             const session = await lucia.createSession(existingUser.rows[0].id, {});
             appendHeader(event, "Set-Cookie", lucia.createSessionCookie(session.id).serialize());
-            return sendRedirect(event, "/project");
+            return sendRedirect(event, "/dashboard");
         }
         const normalUser = await pool.query("SELECT u.id from auth_user u where u.username=$1", [username])
         if(normalUser.rows.length !==0){
@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
             await pool.query("INSERT INTO oauth_account(provider_id, provider_user_id, user_id) VALUES($1, $2, $3)", ["Google", googleUser.id, normalUser.rows[0].id])
             const session = await lucia.createSession(normalUser.rows[0].id, {});
             appendHeader(event, "Set-Cookie", lucia.createSessionCookie(session.id).serialize());
-            return sendRedirect(event, "/project");
+            return sendRedirect(event, "/dashboard");
 
         }
         else {
@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
     
             const session = await lucia.createSession(userId, {});
             appendHeader(event, "Set-Cookie", lucia.createSessionCookie(session.id).serialize());
-            return sendRedirect(event, "/project");
+            return sendRedirect(event, "/dashboard");
         }
 
     } catch (e) {

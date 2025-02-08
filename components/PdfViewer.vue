@@ -85,15 +85,21 @@ const updateDimensions = () => {
 }
 
 const setMode = (mode) => {
-    if (['highlight', 'pen'].includes(mode)) {
-        currentMode.value = mode
-        if(mode === 'pen') {
-            settings.value.tool = 'freehand'
-            updateDimensions()
-        } else {
-            settings.value.tool = 'none' // Disable drawing in highlight mode
-        }
+  // If same mode is clicked again, switch to 'select'
+  if (currentMode.value === mode) {
+    currentMode.value = 'select'
+    settings.value.tool = 'none'
+    return
+  }
+  if (['highlight', 'pen'].includes(mode)) {
+    currentMode.value = mode
+    if (mode === 'pen') {
+      settings.value.tool = 'freehand'
+      updateDimensions()
+    } else {
+      settings.value.tool = 'none'
     }
+  }
 }
 
 const getPageHistory = (pageNum) => {
@@ -111,9 +117,14 @@ const setColor = () => {
 }
 
 const setEraserMode = () => {
-    console.log(settings.value)
-    settings.value.tool='eraser'
+  // If eraser is clicked again, switch to 'select'
+  if (currentMode.value === 'eraser') {
+    currentMode.value = 'select'
+    settings.value.tool = 'none'
+  } else {
+    settings.value.tool = 'eraser'
     currentMode.value = 'eraser'
+  }
 }
 
 const initializeMode = () => {
