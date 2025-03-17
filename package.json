@@ -13,7 +13,9 @@
     "@azure/storage-blob": "^12.26.0",
     "@lucia-auth/adapter-postgresql": "^3.1.2",
     "@node-rs/argon2": "^2.0.2",
+    "@pinia/nuxt": "^0.10.1",
     "@tato30/vue-pdf": "^1.11.3",
+    "@vueuse/nuxt": "^13.0.0",
     "arctic": "^2.3.3",
     "chart.js": "^4.4.7",
     "chartjs-adapter-date-fns": "^3.0.0",
@@ -21,9 +23,11 @@
     "lucia": "^3.2.2",
     "nuxt": "^3.15.0",
     "pg": "^8.13.1",
+    "pinia": "^3.0.1",
     "vue": "latest",
     "vue-paint": "^0.7.1",
-    "vue-router": "latest"
+    "vue-router": "latest",
+    "vuedraggable": "^4.1.0"
   },
   "devDependencies": {
     "@nuxtjs/tailwindcss": "^6.12.2",
