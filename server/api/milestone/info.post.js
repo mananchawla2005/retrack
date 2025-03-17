@@ -26,12 +26,23 @@ export default defineEventHandler(async (event) => {
                 assigneeData.rows.forEach(x => {
                     assignedToIds.push(x.user_id)
                 });
+
+                // Fetch linked literature
+                const literatureData = await pool.query(`
+                    SELECT l.* 
+                    FROM literature l
+                    JOIN task_literature tl ON l.url_id = tl.url_id
+                    WHERE tl.task_id = $1
+                `, [element2.id]);
+                
                 tasks.push({
                     id: element2.id,
                     name: element2.name,
                     deadline: timestampToDate(element2.deadline),
                     assignedTo: assignedToIds,
                     priority: element2.label,
+                    literature: literatureData.rows,
+                    completed: element2.completed || false,  // Add this line
                     editMode: false
                 })
             }

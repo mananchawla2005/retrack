@@ -49,12 +49,23 @@ export default defineEventHandler(async (event) => {
                 // Delete existing assignees for updated tasks
                 if (task.id) {
                     await client.query("DELETE FROM task_assignees WHERE task_id = $1", [task.id]);
+                    await client.query("DELETE FROM task_literature WHERE task_id = $1", [task.id]);
                 }
 
                 // Insert new assignees
                 const taskId = task.id || res.rows[0].id;
                 for (const assigneeId of task.assignedTo) {
                     await client.query("INSERT INTO task_assignees VALUES($1, $2)", [taskId, assigneeId]);
+                }
+
+                // Insert literature links
+                if (task.literature && task.literature.length > 0) {
+                    for (const paper of task.literature) {
+                        await client.query(
+                            "INSERT INTO task_literature (task_id, url_id) VALUES ($1, $2)",
+                            [taskId, paper.url_id]
+                        );
+                    }
                 }
 
             }

@@ -26,7 +26,7 @@
         <!-- Tasks Section -->
         <div v-if="milestone.tasks && milestone.tasks.length > 0" v-for="(task, taskIndex) in milestone.tasks"
           :key="`${index}-${taskIndex}`" class="relative mb-8 group">
-          <TaskCard :task="task" />
+          <TaskCard :task="task" :literature="task.literature" />
         </div>
 
         <!-- Milestone Section -->

@@ -23,9 +23,21 @@ export default defineEventHandler(async (event) => {
                 const queryText = 'INSERT INTO task(name, deadline, label, milestone_id) VALUES($1, $2, $3, $4) RETURNING id'
                 const res = await client.query(queryText, [element.name, getTimestamp(element.deadline), element.priority, milestoneId])
                 taskIds.push(res.rows[0].id)
+                
+                // Insert assignees
                 for (let index2 = 0; index2 < element.assignedTo.length; index2++) {
                     const element2 = element.assignedTo[index2];
                     await client.query("INSERT INTO task_assignees VALUES($1, $2)", [res.rows[0].id, element2])
+                }
+
+                // Insert literature links
+                if (element.literature && element.literature.length > 0) {
+                    for (const paper of element.literature) {
+                        await client.query(
+                            "INSERT INTO task_literature (task_id, url_id) VALUES ($1, $2)",
+                            [res.rows[0].id, paper.url_id]
+                        );
+                    }
                 }
             }
             await client.query('COMMIT')

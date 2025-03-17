@@ -49,6 +49,36 @@
                   </div>
               </div>
             </div>
+              <!-- Literature selection dropdown -->
+              <div class="relative mb-2">
+                <div class="flex flex-wrap gap-2 p-2 border rounded-lg">
+                  <!-- Selected literature bubbles -->
+                  <div v-for="paper in task.literature" :key="paper.id" 
+                      class="bg-indigo-100 px-2 py-1 rounded-full flex items-center">
+                    <span class="truncate max-w-[150px]">{{ paper.title }}</span>
+                    <button @click="removeLiterature(index, paper.id)" 
+                            class="ml-1 text-indigo-500 hover:text-indigo-700">×</button>
+                  </div>
+                  
+                  <!-- Dropdown input -->
+                  <input v-model="literatureSearch[index]" 
+                         @focus="showLiteratureDropdown[index] = true"
+                         type="text" 
+                         placeholder="Link literature..."
+                         class="flex-1 outline-none border-none" />
+                </div>
+
+                <!-- Literature dropdown list -->
+                <div v-if="showLiteratureDropdown[index]" 
+                     class="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg">
+                  <div v-for="paper in filteredLiterature(index)" 
+                       :key="paper.id"
+                       @click="addLiterature(index, paper)"
+                       class="p-2 hover:bg-gray-100 cursor-pointer truncate">
+                    {{ paper.title }}
+                  </div>
+                </div>
+              </div>
               <div class="flex items-center space-x-2">
                 <div @click="setTaskPriority(index, 'must')"
                   :class="['px-2 py-1 text-xs rounded-full cursor-pointer', task.priority === 'must' ? 'ring-2 ring-red-500' : '']"
@@ -154,6 +184,9 @@ const assigneeSearch = ref({});
 const showDropdown = ref({});
 const teamMembers = ref([]);
 const userIdsMapping = ref({});
+const literatureSearch = ref({});
+const showLiteratureDropdown = ref({});
+const availableLiterature = ref([]);
 const filteredMembers = (taskIndex) => {
   const search = assigneeSearch[taskIndex]?.toLowerCase() || '';
   return teamMembers.value.filter(member => 
@@ -177,6 +210,7 @@ const removeAssignee = (taskIndex, member) => {
   );
 };
 
+// Fetch literature on component mount
 onMounted(async () => {
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.relative')) {
@@ -197,8 +231,45 @@ onMounted(async () => {
     userIdsMapping.value[d.user_id] = d.name
     
   }
+
+  // Fetch literature
+  const literatureData = await $fetch('/api/literature/info', {
+    method: "POST",
+    body: {
+      projectId: route.params.id
+    }
+  });
+  availableLiterature.value = literatureData;
 });
 
+// Filter literature based on search
+const filteredLiterature = (taskIndex) => {
+  const search = literatureSearch.value[taskIndex]?.toLowerCase() || '';
+  const task = tasks.value[taskIndex];
+  return availableLiterature.value.filter(paper => 
+    paper.title.toLowerCase().includes(search) && 
+    !task.literature?.some(p => p.id === paper.id)
+  );
+};
+
+// Add literature to task
+const addLiterature = (taskIndex, paper) => {
+  if (!tasks.value[taskIndex].literature) {
+    tasks.value[taskIndex].literature = [];
+  }
+  if (!tasks.value[taskIndex].literature.some(p => p.id === paper.id)) {
+    tasks.value[taskIndex].literature.push(paper);
+  }
+  literatureSearch.value[taskIndex] = '';
+  showLiteratureDropdown.value[taskIndex] = false;
+};
+
+// Remove literature from task
+const removeLiterature = (taskIndex, paperId) => {
+  tasks.value[taskIndex].literature = tasks.value[taskIndex].literature.filter(
+    paper => paper.id !== paperId
+  );
+};
 
 watch(() => props.isLoading, (newValue) => {
   localLoading.value = newValue;
@@ -211,7 +282,7 @@ const resetForm = () => {
   milestoneName.id = ''
   milestoneName.value = '';
   milestoneDeadline.value = '';
-  tasks.value = [{ id: '', name: '', deadline: '', assignedTo: [], priority: 'medium', editMode: true }];
+  tasks.value = [{ id: '', name: '', deadline: '', assignedTo: [], literature: [], priority: 'medium', completed: false, editMode: true }];
 };
 
 watch(() => props.milestone, (newMilestone) => {
@@ -219,14 +290,23 @@ watch(() => props.milestone, (newMilestone) => {
     milestoneId.value = newMilestone.id || ''
     milestoneName.value = newMilestone.name || '';
     milestoneDeadline.value = newMilestone.deadline || '';
-    tasks.value = newMilestone.tasks.length ? newMilestone.tasks.map(task => ({ ...task, editMode: false })) : [{ id: '', name: '', deadline: '', assignedTo: [], priority: 'medium', editMode: true }];
+    tasks.value = newMilestone.tasks.length ? newMilestone.tasks.map(task => ({ ...task, editMode: false })) : [{ id: '', name: '', deadline: '', assignedTo: [], literature: [], priority: 'medium', completed: false, editMode: true }];
   } else {
     resetForm();
   }
 }, { immediate: true });
 
 const addTask = () => {
-  tasks.value.push({ id: '', name: '', deadline: '', assignedTo: [], priority: 'medium', editMode: true });
+  tasks.value.push({ 
+    id: '', 
+    name: '', 
+    deadline: '', 
+    assignedTo: [], 
+    literature: [],
+    priority: 'medium',
+    completed: false, // Add this line
+    editMode: true 
+  });
 };
 
 const toggleTaskEditMode = (index) => {
