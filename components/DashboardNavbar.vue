@@ -14,7 +14,7 @@
             <input type="text" class="bg-gray-100 rounded-full text-sm focus:outline-none focus:shadow-outline px-3 py-2" placeholder="Search...">
           </div>
           <div class="ml-4">
-            <img class="h-10 w-10 rounded-full object-cover" src="https://via.placeholder.com/150" alt="User avatar">
+            <NuxtLink to="/dashboard/user"><img class="h-10 w-10 rounded-full object-cover" src="https://placehold.co/150" alt="User avatar"></NuxtLink>
           </div>
         </div>
       </div>

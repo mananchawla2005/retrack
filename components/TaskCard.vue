@@ -1,23 +1,32 @@
 <template>
   <div class="relative group flex">
     <!-- Task Timeline Node -->
-    <div class="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white border-4 border-green-500 rounded-full w-6 h-6 flex items-center justify-center">
+    <div class="absolute left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white border-4 rounded-full w-6 h-6 flex items-center justify-center"
+         :class="[task.completed ? 'border-gray-400' : 'border-green-500']"
+         @click="toggleComplete">
       <svg xmlns="http://www.w3.org/2000/svg" 
-           class="h-4 w-4 text-green-500" 
+           class="h-4 w-4" 
+           :class="[task.completed ? 'text-gray-400' : 'text-green-500']"
            fill="none" 
            viewBox="0 0 24 24" 
            stroke="currentColor">
-        <path stroke-linecap="round" 
+        <path v-if="task.completed" 
+              stroke-linecap="round" 
               stroke-linejoin="round" 
               stroke-width="2" 
-              d="M9 5H7a2 2 0 00-2 2v12a2 2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-        </svg>
+              d="M5 13l4 4L19 7" />
+        <path v-else
+              stroke-linecap="round" 
+              stroke-linejoin="round" 
+              stroke-width="2" 
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+      </svg>
     </div>
 
     <!-- Task Card -->
     <div class="ml-20 pl-4 w-64 hidden group-hover:block">
       <div class="bg-white rounded-lg shadow-md hover:shadow-lg transition-all duration-300 p-2"
-           :class="[`border-l-4 ${priorityBorderColor}`]">
+           :class="[`border-l-4 ${priorityBorderColor}`, task.completed ? 'opacity-75' : '']">
         <!-- Task Header -->
         <div class="flex justify-between items-start mb-2">
           <div class="flex-1">
@@ -69,6 +78,20 @@
                 </div>
               </template>
               <!-- <span class="text-sm text-gray-600 truncate">{{ task.assignedTo }}</span> -->
+            </div>
+          </div>
+
+          <!-- Linked Literature -->
+          <div v-if="task.literature && task.literature.length > 0" class="flex items-center">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            </svg>
+            <div class="flex flex-wrap gap-1">
+              <span v-for="paper in task.literature" 
+                    :key="paper.id" 
+                    class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded-full">
+                {{ paper.title }}
+              </span>
             </div>
           </div>
         </div>
@@ -171,5 +194,20 @@ const formatDate = (date) => {
     day: 'numeric',
     year: 'numeric'
   });
+};
+
+const toggleComplete = async () => {
+  try {
+    await $fetch('/api/task/change', {
+      method: 'POST',
+      body: {
+        taskId: props.task.id,
+        completed: !props.task.completed
+      }
+    });
+    props.task.completed = !props.task.completed;
+  } catch (error) {
+    console.error('Failed to update task completion status:', error);
+  }
 };
 </script>

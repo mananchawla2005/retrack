@@ -5,6 +5,10 @@
         <input type="color" v-model="currentColor" @change="setColor" v-show="currentMode !== 'select'">
         <input type="range" v-model="currentStrokeSize" @change="setStroke" min="1" max="10" v-show="(currentMode === 'pen' || currentMode == 'eraser')">
         <button @click="setEraserMode" :class="{ active: currentMode === 'eraser' }" v-show="(currentMode === 'pen' || currentMode == 'eraser')" >Eraser</button>
+        <button @click="saveAnnotations" :disabled="saving" class="save-button" :class="{ 'is-saving': saving }">
+            <span v-if="!saving">Save</span>
+            <span v-else class="save-spinner"></span>
+        </button>
     </div>
     <div v-if="error" class="error">
         {{ error }}
@@ -25,7 +29,7 @@
                         class="text-center" 
                         :width="editorDimensions.width" 
                         :height="editorDimensions.height"
-                        :history="getPageHistory(page)" 
+                        v-model:history="histories[page]" 
                         :settings="settings" 
                         @save="downloadSvg" 
                         :tools
@@ -55,7 +59,7 @@ import { VuePDF, usePDF } from '@tato30/vue-pdf'
 import '@tato30/vue-pdf/style.css'
 import { VpEditor, useFreehand, useRectangle, downloadSvg, createSettings, useEraser} from 'vue-paint'
 const tools = [useFreehand(), useRectangle(), useEraser()]
-const histories = ref(new Map())
+const histories = ref({})
 const settings = createSettings(tools, { color: "#000000" })
 
 const route = useRoute()
@@ -73,6 +77,7 @@ const contextMenuPosition = ref({ top: '0px', left: '0px' })
 const selectedHighlightId = ref(null)
 const containerRef = ref(null)
 const editorDimensions = ref({ width: 0, height: 0 })
+const saving = ref(false)
 let pdfUrl = null
 let stopPdfWatch = null
 const updateDimensions = () => {
@@ -106,7 +111,7 @@ const getPageHistory = (pageNum) => {
   if (!histories.value.has(pageNum)) {
     histories.value.set(pageNum, [])
   }
-  return histories.value.get(pageNum)
+  return histories.value[pageNum]
 }
 
 const setStroke = () => {
@@ -200,6 +205,10 @@ function initPdf(url) {
                 await nextTick()
                 loading.value = false
                 updateDimensions()
+                for (let index = 1; index <= pageCount.value; index++) {
+                  histories.value[index] = []
+                  
+                }
             } else if (!loading.value) {
                 error.value = 'Failed to load PDF content'
             }
@@ -225,6 +234,7 @@ onMounted(async () => {
         pdfUrl = URL.createObjectURL(blob)
 
         initPdf(pdfUrl)
+        await loadAnnotations();
     } catch (err) {
         error.value = `Error loading PDF: ${err.message}`
         loading.value = false
@@ -244,103 +254,123 @@ onUnmounted(() => {
 const highlights = ref([])
 const generateId = () => '_' + Math.random().toString(36).substr(2, 9);
 
-const attachCombinedHover = (el, id) => {
-  el.addEventListener('mouseenter', () => {
-    document.querySelectorAll(`[data-highlight-id="${id}"]`).forEach(elem => {
-      elem.classList.add('combined-hover')
-    })
-  })
-  el.addEventListener('mouseleave', () => {
-    document.querySelectorAll(`[data-highlight-id="${id}"]`).forEach(elem => {
-      elem.classList.remove('combined-hover')
-    })
-  })
-}
-const createHighlightSpan = (highlightId, color) => {
-  const container = document.createElement('span')
-  container.style.backgroundColor = color
-  container.classList.add('highlight')
-  container.dataset.highlightId = highlightId
-  container.addEventListener('contextmenu', (e) => showMenu(e, highlightId))
-  attachCombinedHover(container, highlightId)
-  return container
+// Add helper to convert hex to rgba
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 function handleTextSelection(event, page) {
-  const selection = window.getSelection();
-  if (!selection.toString()) return;
-  const range = selection.getRangeAt(0);
-  const highlightId = generateId();
-  const highlight = {
-      id: highlightId,
-      text: selection.toString(),
-      page: page,
-      color: currentColor.value
-  };
-  highlights.value.push(highlight);
+    const selection = window.getSelection();
+    if (!selection.toString()) return;
+    
+    const range = selection.getRangeAt(0);
+    const highlightId = generateId();
+    
+    // Get the client rects of the selection
+    const rects = range.getClientRects();
+    const containerRect = event.target.closest('.pdf-page').getBoundingClientRect();
+    
+    // Convert client coordinates to relative coordinates
+    const coordinates = Array.from(rects).map(rect => ({
+        x: (rect.x - containerRect.x) / containerRect.width,
+        y: (rect.y - containerRect.y) / containerRect.height,
+        width: rect.width / containerRect.width,
+        height: rect.height / containerRect.height
+    }));
 
-  const baseHighlightSpan = createHighlightSpan(highlightId, currentColor.value);
+    const highlight = {
+        id: highlightId,
+        page: page,
+        color: currentColor.value,
+        coordinates
+    };
+    
+    highlights.value.push(highlight);
 
-  try {
-      range.surroundContents(baseHighlightSpan);
-  } catch (error) {
-      const commonAncestor = range.commonAncestorContainer;
-      const walker = document.createTreeWalker(commonAncestor, NodeFilter.SHOW_TEXT, null);
-      const nodesToWrap = [];
-      while (walker.nextNode()) {
-          const node = walker.currentNode;
-          if (range.intersectsNode(node)) {
-              nodesToWrap.push(node);
-          }
-      }
-      nodesToWrap.forEach(node => {
-          let startOffset = 0;
-          let endOffset = node.textContent.length;
-          if (node === range.startContainer) startOffset = range.startOffset;
-          if (node === range.endContainer) endOffset = range.endOffset;
-          if (startOffset === endOffset) return;
+    // Create floating highlights using RGBA colors
+    coordinates.forEach(coord => {
+        const floatingHighlight = document.createElement('span');
+        floatingHighlight.classList.add('floating-highlight');
+        floatingHighlight.dataset.highlightId = highlightId;
+        floatingHighlight.style.backgroundColor = hexToRgba(currentColor.value, 0.3);
+        floatingHighlight.style.position = 'absolute';
+        floatingHighlight.style.left = `${coord.x * 100}%`;
+        floatingHighlight.style.top = `${coord.y * 100}%`;
+        floatingHighlight.style.width = `${coord.width * 100}%`;
+        floatingHighlight.style.height = `${coord.height * 100}%`;
+        floatingHighlight.addEventListener('contextmenu', (e) => showMenu(e, highlightId));
+        
+        event.target.closest('.pdf-page').querySelector('.textLayer').appendChild(floatingHighlight);
+    });
 
-          const text = node.textContent;
-          const beforeText = text.slice(0, startOffset);
-          const selectedText = text.slice(startOffset, endOffset);
-          const afterText = text.slice(endOffset);
-          const beforeNode = document.createTextNode(beforeText);
-          const selectedNode = document.createTextNode(selectedText);
-          const afterNode = document.createTextNode(afterText);
-
-          const newHighlightSpan = createHighlightSpan(highlightId, currentColor.value);
-          newHighlightSpan.textContent = '';
-          newHighlightSpan.appendChild(selectedNode);
-
-          const parent = node.parentNode;
-          parent.insertBefore(beforeNode, node);
-          parent.insertBefore(newHighlightSpan, node);
-          parent.insertBefore(afterNode, node);
-          parent.removeChild(node);
-      });
-  }
-  selection.removeAllRanges();
+    selection.removeAllRanges();
 }
+
+const recreateHighlight = (highlight) => {
+    const pageElement = document.querySelector(`.pdf-page:nth-child(${highlight.page})`);
+    if (!pageElement) return;
+    
+    const textLayer = pageElement.querySelector('.textLayer');
+
+    // Create floating highlights
+    highlight.coordinates.forEach(coord => {
+        const span = document.createElement('span');
+        span.classList.add('floating-highlight');
+        span.dataset.highlightId = highlight.id;
+        span.style.backgroundColor = hexToRgba(highlight.color, 0.3);
+        span.style.position = 'absolute';
+        span.style.left = `${coord.x * 100}%`;
+        span.style.top = `${coord.y * 100}%`;
+        span.style.width = `${coord.width * 100}%`;
+        span.style.height = `${coord.height * 100}%`;
+        span.style.pointerEvents = 'all'; // Make sure it's clickable
+        
+        span.addEventListener('contextmenu', (e) => showMenu(e, highlight.id));
+        
+        textLayer.appendChild(span);
+    });
+};
+
+const loadAnnotations = async () => {
+    try {
+        const response = await fetch('/api/literature/load', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                urlId: route.params.id
+            })
+        });
+        const data = await response.json();
+        
+        // Load highlights
+        highlights.value = data.highlights;
+        highlights.value.forEach(recreateHighlight);
+        
+        // Load drawings
+        if (data.pageDrawings) {
+          histories.value = data.pageDrawings
+          nextTick(() => {
+                // Force canvas update
+                updateDimensions();
+            });
+        }
+    } catch (error) {
+        console.error('Failed to load annotations:', error);
+    }
+};
 
 function deleteHighlight(highlightId) {
     // Remove from highlights array
     highlights.value = highlights.value.filter(h => h.id !== highlightId);
     
-    // Get all spans with this highlight ID
+    // Remove all highlight spans
     const highlightSpans = document.querySelectorAll(`[data-highlight-id="${highlightId}"]`);
-    
-    // Process each highlight span
-    highlightSpans.forEach(highlightSpan => {
-        const parent = highlightSpan.parentNode;
-        
-        // Insert text content before the highlight span
-        const textContent = highlightSpan.textContent;
-        const textNode = document.createTextNode(textContent);
-        parent.insertBefore(textNode, highlightSpan);
-        
-        // Remove the highlight span
-        parent.removeChild(highlightSpan);
-    });
+    highlightSpans.forEach(span => span.remove());
 }
 
 onMounted(() => {
@@ -362,6 +392,36 @@ watch(currentMode, (newMode) => {
     })
 })
 
+const saveAnnotations = async () => {
+    if (saving.value) return;
+    try {
+        saving.value = true;
+        const pageDrawings = {...histories.value} // Create a copy of histories object
+        
+        // Filter out empty history arrays
+        Object.keys(pageDrawings).forEach(page => {
+            if (pageDrawings[page].length === 0) {
+                delete pageDrawings[page]
+            }
+        })
+
+        await fetch('/api/literature/save', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                urlId: route.params.id,
+                highlights: highlights.value,
+                pageDrawings
+            })
+        });
+    } catch (error) {
+        console.error('Failed to save annotations:', error);
+    } finally {
+        saving.value = false;
+    }
+};
 </script>
 
 <style scoped>
@@ -384,6 +444,7 @@ watch(currentMode, (newMode) => {
     border-top: 2px solid #3498db;
     border-radius: 50%;
     animation: spin 1s linear infinite;
+    z-index: 50;
 }
 
 .toolbar {
@@ -467,20 +528,12 @@ watch(currentMode, (newMode) => {
 
 
 
-.pdf-page :deep(.highlight) {
+.pdf-page :deep(.highlight),
+.pdf-page :deep(.floating-highlight) {
     background-color: var(--highlight-color, yellow);
-    opacity: 0.5;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
+    pointer-events: all;
     cursor: pointer;
-    transition: opacity 0.2s;
 }
-
-.pdf-page :deep(.highlight:hover) {
-    opacity: 0.7;
-}
-
 
 .context-menu {
   position: fixed;
@@ -500,14 +553,6 @@ watch(currentMode, (newMode) => {
 
 .context-menu-item:hover {
   background-color: #f5f5f5;
-}
-
-
-.highlight.combined-hover {
-  opacity: 0.7 !important;
-}
-.pdf-page :deep(.highlight.combined-hover) {
-    opacity: 0.7;
 }
 
 .pdf-page {
@@ -549,4 +594,48 @@ watch(currentMode, (newMode) => {
     user-select: none;
 }
 
+.floating-highlight {    position: absolute;
+    pointer-events: all !important;
+    z-index: 3;
+    background-color: var(--highlight-color, yellow);
+    cursor: pointer;
+    mix-blend-mode: lighten;
+}
+
+.save-button {
+    position: relative;
+    min-width: 60px;
+    height: 32px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.save-button:disabled {
+    background: #fff;
+    cursor: not-allowed;
+}
+
+.save-button.is-saving {
+    color: transparent;  /* Hide text but keep button size */
+}
+
+.save-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid #ccc;
+    border-radius: 50%;
+    border-top-color: #666;
+    animation: spin 1s ease-in-out infinite;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+}
+
+@keyframes spin {
+    to { transform: translate(-50%, -50%) rotate(360deg); }
+}
 </style>
